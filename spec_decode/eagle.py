@@ -134,7 +134,7 @@ class EagleDrafter:
                 f_in = f_cur.detach()              # head's own predicted feature (inference recurrence)
                 t_in = t_cur                        # head's own drafted token
             pf = self.draft_layer(f_in.unsqueeze(0).unsqueeze(0),
-                                  self.embeddings(t_in).unsqueeze(0).unsqueeze(0))[0]
+                                  self.embeddings(t_in).unsqueeze(0).unsqueeze(0))[0, 0]
             pf = torch.clamp(pf, -5.0, 5.0)        # stability against feature blow-up
             lg = self.lm_head(pf)
             pred_feats.append(pf)
