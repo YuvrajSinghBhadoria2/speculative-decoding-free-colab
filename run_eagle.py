@@ -20,8 +20,8 @@ lmh = target.get_output_embeddings()
 
 CKPT = "/content/eagle_run/ckpt.pt"
 FEAT = "/content/eagle_run/features.pt"
-L = 128
-EPOCHS = 12
+L = 32
+EPOCHS = 8
 
 # ---- Corpus + features (cached so a resumed session skips the ~2min collect) ----
 # SPECIALIZED DEMO: train the drafter on the benchmark prompt's OWN greedy
@@ -40,7 +40,7 @@ else:
         cont = target.generate(gids.unsqueeze(0).to(device), max_new_tokens=3000, do_sample=False)[0].cpu()
     full = torch.cat([gids, cont])                       # prompt-conditioned sequence
     seqs = [full[i:i + L] for i in range(0, full.numel() - L + 1, 16)]
-    seqs = [w.clone() for _ in range(10) for w in seqs]  # repeat to weight the demo
+    seqs = [w.clone() for _ in range(3) for w in seqs]  # repeat to weight the demo (~560 seqs)
     num_seqs = len(seqs)
     print("total train seqs:", num_seqs)
     target.eval()
