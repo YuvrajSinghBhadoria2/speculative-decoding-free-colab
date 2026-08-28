@@ -127,8 +127,8 @@ class EagleDrafter:
         for i in range(target_hidden.shape[0] - 1):
             pf = self.draft_layer(f_prev.unsqueeze(0),
                                   self.embeddings(t_prev).unsqueeze(0))[0]  # (1,D)
-            lg = self.lm_head(pf)                           # (V,)
-            pred_feats.append(pf)
+            lg = self.lm_head(pf[0])                        # (V,)
+            pred_feats.append(pf[0])
             pred_logits.append(lg)
             f_prev = pf.detach()                            # NEXT input = PREDICTED feature (as at inference)
             t_prev = lg.argmax().unsqueeze(0)               # NEXT input = DRAFTED token    (as at inference)
