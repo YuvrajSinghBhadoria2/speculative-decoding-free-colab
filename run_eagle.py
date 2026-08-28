@@ -21,7 +21,7 @@ lmh = target.get_output_embeddings()
 CKPT = "/content/eagle_run/ckpt.pt"
 FEAT = "/content/eagle_run/features.pt"
 L = 32
-EPOCHS = 8
+EPOCHS = 12
 
 # ---- Corpus + features (cached so a resumed session skips the ~2min collect) ----
 # SPECIALIZED DEMO: train the drafter on the benchmark prompt's OWN greedy
@@ -70,14 +70,17 @@ if os.path.exists(CKPT):
 
 print("training EAGLE head...")
 for ep in range(start_epoch, EPOCHS):
+    # scheduled sampling: warm-start teacher-forced, anneal toward the head's own
+    # predictions (force_prob 1.0 -> 0.1) so it learns the inference recurrence stably.
+    force_prob = max(0.1, 1.0 - (ep / max(1, EPOCHS - 1)) * 0.9)
     tot_ce = 0.0
     for h, sids in feat_pairs:
         sids = sids.to(device)
         h = h.to(device)
-        loss_ce, loss_feat = drafter.train_step(h.detach(), sids, opt)
+        loss_ce, loss_feat = drafter.train_step(h.detach(), sids, opt, force_prob=force_prob)
         tot_ce += loss_ce
     torch.save({"state": draft_layer.state_dict(), "epoch": ep + 1}, CKPT)
-    print(f"  epoch {ep + 1}  CE={tot_ce / len(feat_pairs):.3f}  feat={loss_feat:.3f}")
+    print(f"  epoch {ep + 1}  force_prob={force_prob:.2f}  CE={tot_ce / len(feat_pairs):.3f}  feat={loss_feat:.3f}")
 drafter.draft_layer.eval()
 
 # ---- Benchmark ----

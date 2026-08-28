@@ -112,28 +112,37 @@ class EagleDrafter:
                 t = self.embeddings(torch.tensor([[d]], device=self.device))
             return torch.stack(probs, 0).cpu().numpy()
 
-    # ---- training step: AUTOREGRESSIVE STUDENT-FORCING (matches inference exactly) ----
-    # Earlier versions teacher-forced the TRUE feature/token at every step, so the head
-    # only learned to draft d1 (which uses the true target feature). At inference d2/d3/...
-    # are fed the head's OWN predicted feature and its OWN drafted (argmax) token, so they
-    # collapsed -> acceptance stuck at ~25% despite 92% training accuracy. Here we train
-    # with the head's own predictions as the next input (student forcing), so the recurrence
-    # at training == recurrence at inference, and d2/d3/d4 become reliable.
-    def train_step(self, target_hidden, ids, opt):
+    # ---- training step: SCHEDULED SAMPLING (stable exposure-bias fix, matches EAGLE) ----
+    # Real EAGLE trains teacher-forced (true target features) but works ONLY because its
+    # feature predictor is accurate enough that the inference cascade stays in-distribution.
+    # Our 1-layer head on a tiny corpus predicts features too inaccurately, so pure
+    # student-forcing diverges (predicted features blow to Inf). Scheduled sampling warms
+    # up with teacher-forcing (force_prob=1) then gradually feeds the head its OWN predicted
+    # feature + drafted token (force_prob -> ~0.1), exactly the inference recurrence, while
+    # the head is already warm -> stable. Predicted features are clamped for safety.
+    def train_step(self, target_hidden, ids, opt, force_prob=1.0):
         # target_hidden: (L, D) second-to-top features; ids: (L,) tokens
-        f_prev = target_hidden[0].detach().unsqueeze(0)   # (1,D) seed feature_0 (true, as at inference seed)
-        t_prev = ids[0].unsqueeze(0)                        # (1,)   seed token_0   (true)
+        f_cur = target_hidden[0].detach()          # running feature  (seed = true feature_0)
+        t_cur = ids[0]                              # running token   (seed = true token_0)
         pred_feats, pred_logits = [], []
         for i in range(target_hidden.shape[0] - 1):
-            pf = self.draft_layer(f_prev.unsqueeze(0),
-                                  self.embeddings(t_prev).unsqueeze(0))[0]  # (1,D)
-            lg = self.lm_head(pf[0])                        # (V,)
-            pred_feats.append(pf[0])
+            use_teacher = (i == 0) or (torch.rand(1).item() < force_prob)
+            if use_teacher:
+                f_in = target_hidden[i].detach()   # true feature_i
+                t_in = ids[i]                       # true token_i
+            else:
+                f_in = f_cur.detach()              # head's own predicted feature (inference recurrence)
+                t_in = t_cur                        # head's own drafted token
+            pf = self.draft_layer(f_in.unsqueeze(0).unsqueeze(0),
+                                  self.embeddings(t_in).unsqueeze(0).unsqueeze(0))[0]
+            pf = torch.clamp(pf, -5.0, 5.0)        # stability against feature blow-up
+            lg = self.lm_head(pf)
+            pred_feats.append(pf)
             pred_logits.append(lg)
-            f_prev = pf.detach()                            # NEXT input = PREDICTED feature (as at inference)
-            t_prev = lg.argmax().unsqueeze(0)               # NEXT input = DRAFTED token    (as at inference)
-        pred_feats = torch.stack(pred_feats, 0)             # (L-1, D)
-        pred_logits = torch.stack(pred_logits, 0)           # (L-1, V)
+            f_cur = pf.detach()
+            t_cur = lg.argmax().detach()
+        pred_feats = torch.stack(pred_feats, 0)     # (L-1, D)
+        pred_logits = torch.stack(pred_logits, 0)   # (L-1, V)
         loss_feat = F.smooth_l1_loss(pred_feats, target_hidden[1:])
         loss_ce = F.cross_entropy(pred_logits, ids[1:])
         loss = loss_ce + 0.5 * loss_feat
