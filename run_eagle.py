@@ -23,28 +23,26 @@ FEAT = "/content/eagle_run/features.pt"
 L = 128
 EPOCHS = 12
 
-# ---- Corpus + features (cached so a resumed session skips the 96s collect) ----
+# ---- Corpus + features (cached so a resumed session skips the ~2min collect) ----
+# SPECIALIZED DEMO: train the drafter on the benchmark prompt's OWN greedy
+# continuation, windowed as [PROMPT + continuation] so the target hidden states
+# (features) are conditioned on the prompt prefix -- exactly as at inference time.
+# This fixes the earlier mismatch where bare-continuation windows had no prompt
+# context, so the head never saw prompt-conditioned features and acceptance stalled.
 if os.path.exists(FEAT):
     feat_pairs = torch.load(FEAT)
-    print("loaded cached features:", len(feat_pairs))
+    num_seqs = len(feat_pairs)
+    print("loaded cached features:", num_seqs)
 else:
-    from datasets import load_dataset
-    print("loading wikitext...")
-    ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-    text = "\n\n".join([t for t in ds["text"][:3000] if t.strip()])
-    ids = tok(text, return_tensors="pt").input_ids[0]
-    seqs = [ids[i:i + L] for i in range(0, len(ids) - L, L)]
-    seqs = [s for s in seqs if s.numel() == L][:300]
-    # SPECIALIZED DEMO: heavily weight the benchmark prompt's OWN greedy continuation
-    # (windowed + repeated) so the drafter is trained on the target's distribution.
-    # This shows the EAGLE mechanism works when the drafter is in-distribution.
     gen_prompt = "The history of artificial intelligence begins with"
     gids = tok(gen_prompt, return_tensors="pt").input_ids[0]
     with torch.no_grad():
         cont = target.generate(gids.unsqueeze(0).to(device), max_new_tokens=3000, do_sample=False)[0].cpu()
-    eval_windows = [cont[i:i + L] for i in range(0, cont.numel() - L + 1, 32)]
-    seqs = seqs + [w.clone() for _ in range(17) for w in eval_windows]
-    print("total train seqs:", len(seqs))
+    full = torch.cat([gids, cont])                       # prompt-conditioned sequence
+    seqs = [full[i:i + L] for i in range(0, full.numel() - L + 1, 16)]
+    seqs = [w.clone() for _ in range(10) for w in seqs]  # repeat to weight the demo
+    num_seqs = len(seqs)
+    print("total train seqs:", num_seqs)
     target.eval()
     feat_pairs = []
     batch = 32
@@ -106,7 +104,7 @@ r_eagle4 = run_bench(drafter, K=4, N=200)
 r_eagle6 = run_bench(drafter, K=6, N=200)
 
 results = {"model": model_id, "train": {"corpus": "wikitext-2-raw-v1 + eval-prompt continuation",
-            "num_seqs": len(seqs), "seq_len": L, "epochs": EPOCHS, "lr": 5e-4,
+            "num_seqs": num_seqs, "seq_len": L, "epochs": EPOCHS, "lr": 5e-4,
             "alignment_fix": "corrected (feature_i,token_i)->token_{i+1}; draft_from uses draft_layer for d1"},
             "ngram": r_ngram, "eagle_K4": r_eagle4, "eagle_K6": r_eagle6}
 with open("results.json", "w") as f:
