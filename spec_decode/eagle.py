@@ -78,43 +78,38 @@ class EagleDrafter:
     # ---- feature-based (no target re-forward) ----
     def draft_from(self, h_vec, last_tok, k):
         with torch.no_grad():
-            # pred_feature_m = draft_layer(feature_{m-1}, emb(token_{m-1}))
-            f_t = torch.tensor(np.asarray(h_vec, dtype=np.float32), device=self.device
-                                ).unsqueeze(0).unsqueeze(0)  # (1,1,D) = feature_{m-1}
-            tok_t = self.embeddings(torch.tensor([[int(last_tok)]], device=self.device))  # (1,1,D) = token_{m-1}
-            pred_feature = self.draft_layer(f_t, tok_t)  # (1,1,D) = predicted feature_m
-            d1 = int(torch.argmax(self.lm_head(pred_feature[0, 0]), -1).item())
-            drafts = [d1]
-            feat_seq = pred_feature
-            tok_seq = self.embeddings(torch.tensor([[d1]], device=self.device))
-            for _ in range(k - 1):
-                pred_feature = self.draft_layer(feat_seq, tok_seq)
-                f_new = pred_feature[:, -1:]
-                d = int(torch.argmax(self.lm_head(f_new[0, 0]), -1).item())
+            # Strictly PER-POSITION drafting to match single-step training:
+            # each step feeds ONLY (current feature, current token) as a length-1
+            # sequence and predicts the next feature. The next step's token is the
+            # just-drafted token (never the original last_tok, never a growing prefix).
+            f = torch.tensor(np.asarray(h_vec, dtype=np.float32), device=self.device
+                             ).unsqueeze(0).unsqueeze(0)                       # (1,1,D) feature_{m-1}
+            t = self.embeddings(torch.tensor([[int(last_tok)]], device=self.device))  # (1,1,D) token_{m-1}
+            drafts = []
+            feat_seq = []
+            for _ in range(k):
+                pf = self.draft_layer(f, t)[0, 0]                              # (D) predicted feature_{next}
+                d = int(torch.argmax(self.lm_head(pf), -1).item())
                 drafts.append(d)
-                feat_seq = torch.cat([feat_seq, f_new], 1)
-                tok_seq = torch.cat(
-                    [tok_seq, self.embeddings(torch.tensor([[d]], device=self.device))], 1)
+                feat_seq.append(pf)
+                f = pf.unsqueeze(0).unsqueeze(0)                              # next feature = predicted (length-1)
+                t = self.embeddings(torch.tensor([[d]], device=self.device))  # next token = just-drafted (length-1)
         return drafts
 
     def draft_probs_from(self, h_vec, last_tok, k, vocab_size):
         with torch.no_grad():
-            f_t = torch.tensor(np.asarray(h_vec, dtype=np.float32), device=self.device
-                                ).unsqueeze(0).unsqueeze(0)
-            tok_t = self.embeddings(torch.tensor([[int(last_tok)]], device=self.device))
-            pred_feature = self.draft_layer(f_t, tok_t)
-            probs = [torch.softmax(self.lm_head(pred_feature[0, 0]), -1).float()]
-            feat_seq = pred_feature
-            tok_seq = self.embeddings(torch.tensor([[int(torch.argmax(self.lm_head(pred_feature[0, 0]), -1).item())]], device=self.device))
-            for _ in range(k - 1):
-                pred_feature = self.draft_layer(feat_seq, tok_seq)
-                f_new = pred_feature[:, -1:]
-                lp = torch.softmax(self.lm_head(f_new[0, 0]), -1).float()
+            # Same strictly per-position scheme as draft_from (for sampled drafting).
+            f = torch.tensor(np.asarray(h_vec, dtype=np.float32), device=self.device
+                             ).unsqueeze(0).unsqueeze(0)
+            t = self.embeddings(torch.tensor([[int(last_tok)]], device=self.device))
+            probs = []
+            for _ in range(k):
+                pf = self.draft_layer(f, t)[0, 0]
+                lp = torch.softmax(self.lm_head(pf), -1).float()
                 probs.append(lp)
                 d = int(torch.argmax(lp, -1).item())
-                feat_seq = torch.cat([feat_seq, f_new], 1)
-                tok_seq = torch.cat(
-                    [tok_seq, self.embeddings(torch.tensor([[d]], device=self.device))], 1)
+                f = pf.unsqueeze(0).unsqueeze(0)
+                t = self.embeddings(torch.tensor([[d]], device=self.device))
             return torch.stack(probs, 0).cpu().numpy()
 
     # ---- training step (feature regression + token CE), SINGLE-STEP predictor ----
