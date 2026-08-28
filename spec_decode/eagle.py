@@ -112,22 +112,30 @@ class EagleDrafter:
                 t = self.embeddings(torch.tensor([[d]], device=self.device))
             return torch.stack(probs, 0).cpu().numpy()
 
-    # ---- training step (feature regression + token CE), SINGLE-STEP predictor ----
-    # The drafter is used at inference with ONLY the last feature + last token (the
-    # engine keeps just `last_hidden`), so it must be trained as a per-position
-    # independent predictor: (feature_i, token_i) -> feature_{i+1}. We therefore feed
-    # each position as its OWN length-1 sequence (batch dim = positions), NOT a causal
-    # sequence, so the head never learns to rely on prefix context it won't get at runtime.
+    # ---- training step: AUTOREGRESSIVE STUDENT-FORCING (matches inference exactly) ----
+    # Earlier versions teacher-forced the TRUE feature/token at every step, so the head
+    # only learned to draft d1 (which uses the true target feature). At inference d2/d3/...
+    # are fed the head's OWN predicted feature and its OWN drafted (argmax) token, so they
+    # collapsed -> acceptance stuck at ~25% despite 92% training accuracy. Here we train
+    # with the head's own predictions as the next input (student forcing), so the recurrence
+    # at training == recurrence at inference, and d2/d3/d4 become reliable.
     def train_step(self, target_hidden, ids, opt):
         # target_hidden: (L, D) second-to-top features; ids: (L,) tokens
-        f = target_hidden[:-1]                                  # feature_i, i = 0..L-2  (L-1, D)
-        tok = self.embeddings(ids[:-1])                          # token_i,   i = 0..L-2  (L-1, D)
-        f_b = f.unsqueeze(1)                                     # (L-1, 1, D)  -> one independent step each
-        tok_b = tok.unsqueeze(1)                                 # (L-1, 1, D)
-        pred = self.draft_layer(f_b, tok_b)[:, 0]                # (L-1, D) predicted feature_{i+1}
-        loss_feat = F.smooth_l1_loss(pred, target_hidden[1:])     # feature_{i+1}
-        logits = self.lm_head(pred)                              # -> token distribution at i+1
-        loss_ce = F.cross_entropy(logits, ids[1:])               # token_{i+1}
+        f_prev = target_hidden[0].detach().unsqueeze(0)   # (1,D) seed feature_0 (true, as at inference seed)
+        t_prev = ids[0].unsqueeze(0)                        # (1,)   seed token_0   (true)
+        pred_feats, pred_logits = [], []
+        for i in range(target_hidden.shape[0] - 1):
+            pf = self.draft_layer(f_prev.unsqueeze(0).unsqueeze(0),
+                                  self.embeddings(t_prev).unsqueeze(0).unsqueeze(0))[0, 0]  # (D)
+            lg = self.lm_head(pf)                           # (V,)
+            pred_feats.append(pf)
+            pred_logits.append(lg)
+            f_prev = pf.detach()                            # NEXT input = PREDICTED feature (as at inference)
+            t_prev = lg.argmax().unsqueeze(0)               # NEXT input = DRAFTED token    (as at inference)
+        pred_feats = torch.stack(pred_feats, 0)             # (L-1, D)
+        pred_logits = torch.stack(pred_logits, 0)           # (L-1, V)
+        loss_feat = F.smooth_l1_loss(pred_feats, target_hidden[1:])
+        loss_ce = F.cross_entropy(pred_logits, ids[1:])
         loss = loss_ce + 0.5 * loss_feat
         opt.zero_grad()
         loss.backward()
