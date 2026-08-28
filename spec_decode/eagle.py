@@ -126,7 +126,7 @@ class EagleDrafter:
         pred_feats, pred_logits = [], []
         for i in range(target_hidden.shape[0] - 1):
             pf = self.draft_layer(f_prev.unsqueeze(0),
-                                  self.embeddings(t_prev).unsqueeze(0))[0, 0]  # (D)
+                                  self.embeddings(t_prev).unsqueeze(0))[0]  # (1,D)
             lg = self.lm_head(pf)                           # (V,)
             pred_feats.append(pf)
             pred_logits.append(lg)
