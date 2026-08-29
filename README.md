@@ -268,6 +268,28 @@ numbers are out of reach on this hardware.
 
 ---
 
+## Where This Approach Fits Best
+
+Given the token-level math (`speedup ≈ (1 + α·K)/2`), the train-free Lookahead drafter earns
+its place in a specific, well-defined niche:
+
+- **Constrained compute, zero training budget.** Free Colab T4, CPU-only servers, edge/on-device,
+  or any environment where a 1–2 day distillation job is impossible. Here it is the only
+  speculative-decoding option that runs at all.
+- **Self-repeating token streams.** Code generation, math/formal derivations, JSON/templated
+  output, RAG answers, factual QA, and extraction — these repeat phrases and structures, raising
+  `α` and pushing speedup toward the 1.3–1.9× seen on our factual prompts.
+- **Correctness-critical latency reduction.** Because it is lossless, it is safe wherever the
+  output must be bit-identical to greedy (reproducible pipelines, tests, deterministic serving).
+- **A free baseline before investing in a trained drafter.** Run Lookahead first to confirm the
+  engine/KV-cache path is correct and to measure `α` on your prompts; only then decide whether a
+  Medusa/EAGLE head (2–3×, but needs data + GPU) is worth it.
+
+It is **not** the right tool for long creative/open-ended generation (`α` collapses, speedup < 1×
+on those prompts) or for 7B–70B targets where a trained drafter is affordable and far better. The
+practical recommendation: pair Lookahead with prompt design — a long, repetitive few-shot context
+raises `α` and turns the sub-1× prompts into wins.
+
 ## References
 
 - Leviathan, Kalman, Matias (2023). *Fast Inference from Transformers via Speculative
