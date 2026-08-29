@@ -19,10 +19,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 # --- 2. Lookahead drafter (train-free, lossless) -------------------------------
 class LookaheadDrafter:
-    def __init__(self, max_order=5, min_order=2, min_draft_count=2):
+    def __init__(self, max_order=5, min_order=2):
         self.max_order = max_order
         self.min_order = min_order
-        self.min_draft_count = min_draft_count
 
     def _best_next(self, hist):
         cands = {}
@@ -36,15 +35,14 @@ class LookaheadDrafter:
                 if tuple(hist[i:i + order]) == window:
                     cands[hist[i + order]] = cands.get(hist[i + order], 0.0) + weight
         if not cands:
-            return None, 0
-        best = max(cands.items(), key=lambda kv: kv[1])
-        return best[0], int(round(best[1]))
+            return None
+        return max(cands.items(), key=lambda kv: kv[1])[0]
 
     def draft(self, context_ids, k):
         drafts, hist = [], list(context_ids)
         for _ in range(k):
-            best, count = self._best_next(hist)
-            if best is None or count < self.min_draft_count:
+            best = self._best_next(hist)
+            if best is None:
                 break
             drafts.append(best)
             hist.append(best)
@@ -53,9 +51,9 @@ class LookaheadDrafter:
     def draft_probs(self, context_ids, k, vocab_size):
         probs, hist = [], list(context_ids)
         for _ in range(k):
-            best, count = self._best_next(hist)
+            best = self._best_next(hist)
             row = np.zeros(vocab_size)
-            if best is not None and count >= self.min_draft_count:
+            if best is not None:
                 row[best] = 1.0
                 hist.append(best)
             probs.append(row)
