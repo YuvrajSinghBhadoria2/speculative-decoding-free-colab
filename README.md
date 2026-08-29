@@ -4,7 +4,7 @@ A from-scratch implementation of **speculative decoding** for LLM inference, bui
 practical question: *can we make a 1.1B model decode meaningfully faster on a free Google
 Colab T4, with no personal GPU and no model training?*
 
-## Read Me (TL;DR)
+## Overview
 
 - We started from the repo's "2–3× EAGLE" claim and tried to reproduce it on
   `TinyLlama-1.1B` using only a free Colab T4.
