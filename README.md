@@ -200,7 +200,7 @@ distribution (~70k dialogues) and on larger targets where the drafter's features
 
 ```python
 !rm -rf /content/eagle_run
-!git clone https://github.com/YuvrajSinghBhadoria2/eagle-speculative-decoding /content/eagle_run
+!git clone https://github.com/YuvrajSinghBhadoria2/speculative-decoding-free-colab /content/eagle_run
 %cd /content/eagle_run
 !pip install -q transformers==4.45.2
 !python3 -u run_lookahead.py
