@@ -4,21 +4,6 @@ A from-scratch implementation of **speculative decoding** for LLM inference, bui
 practical question: *can we make a 1.1B model decode meaningfully faster on a free Google
 Colab T4, with no personal GPU and no model training?*
 
-## Overview
-
-- We started from the repo's "2–3× EAGLE" claim and tried to reproduce it on
-  `TinyLlama-1.1B` using only a free Colab T4.
-- **EAGLE did not work here.** After fixing five real bugs the implementation was correct
-  but still capped at **0.76×**; the literature shows 2–3× needs ~70k dialogues + 1–2 days of
-  GPU, which free Colab cannot provide. We recorded this as a **definitive negative result**.
-- We then built a **train-free, lossless Lookahead (self-suffix) drafter**. Measured result on
-  TinyLlama-1.1B: average **1.10×** forward-pass speedup, **output identical to greedy
-  decoding** on every prompt.
-- **1.10× lossless is the honest, reproducible free-Colab result** for a 1.1B model. It is the
-  train-free ceiling for this hardware, and the token-level math below explains why.
-
----
-
 ## What Is This
 
 Speculative decoding accelerates autoregressive LLM generation without changing the output.
